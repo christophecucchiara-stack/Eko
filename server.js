@@ -49,11 +49,11 @@ const upload = multer({ storage: storage });
 // Permet au serveur de distribuer directement les fichiers du dossier (HTML, CSS, JS)
 app.use(express.static(__dirname));
 
-// Route principale : quand on tape juste l'adresse, on charge index.html
+// Route principale : Envoie l'index en résolvant le chemin absolu de manière stricte
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
+    res.sendFile(path.resolve(__dirname, 'index.html'));
 });
-// 5. LES ROUTES API
+});// 5. LES ROUTES API
 
 // Récupérer toutes les vidéos
 app.get('/api/videos', (req, res) => {
@@ -107,4 +107,8 @@ app.delete('/api/videos/:id', (req, res) => {
 // 6. LANCEMENT DU SERVEUR
 app.listen(PORT, () => {
     console.log(`🚀 Serveur Eko actif et configuré sur le port ${PORT}`);
+});
+app.listen(PORT, () => {
+    console.log(`🚀 Eko est en ligne sur http://localhost:${PORT}`);
+    console.log(`Dossier actuel du serveur : ${__dirname}`);
 });
