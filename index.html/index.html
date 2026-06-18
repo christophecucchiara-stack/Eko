@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eko - Vos vidéos en boucle</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        .video-container { 
+            scroll-snap-type: y mandatory; 
+            scroll-behavior: smooth;
+        }
+        .video-card { scroll-snap-align: start; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body class="bg-black flex justify-center items-center h-screen font-sans select-none">
+
+    <!-- Écran Principal -->
+    <div class="relative w-full max-w-[450px] h-full sm:h-[850px] bg-zinc-900 sm:rounded-3xl sm:border-[8px] sm:border-zinc-800 overflow-hidden shadow-2xl flex flex-col">
+        
+        <!-- Flux de vidéos vertical -->
+        <div id="feed" class="video-container no-scrollbar w-full h-full overflow-y-scroll snap-y mandatory bg-black">
+            <!-- Les vidéos s'insèrent ici -->
+        </div>
+
+        <!-- Barre de navigation -->
+        <div class="absolute bottom-0 w-full h-16 bg-black border-t border-zinc-900 flex justify-around items-center text-white text-xs z-20 pb-2">
+            <button class="font-bold text-white">Accueil</button>
+            <button class="text-zinc-500">Découvrir</button>
+            <button id="btn-open-upload" class="relative bg-white text-black px-4 py-1.5 rounded-lg font-bold text-lg hover:scale-105 active:scale-95 transition-all">
+                +
+            </button>
+            <button class="text-zinc-500">Messages</button>
+            <button class="text-zinc-500">Profil</button>
+        </div>
+
+        <!-- Fenêtre Modale d'upload -->
+        <div id="upload-modal" class="absolute inset-0 bg-zinc-950/95 z-30 hidden flex flex-col justify-center items-center p-6 text-white">
+            <button id="btn-close-upload" class="absolute top-6 right-6 text-2xl text-zinc-400 hover:text-white">✕</button>
+            <h2 class="text-2xl font-bold mb-6">Publier une vidéo sur Eko</h2>
+            
+            <label class="w-full max-w-xs h-44 border-2 border-dashed border-zinc-700 rounded-2xl flex flex-col justify-center items-center cursor-pointer hover:border-white bg-zinc-900/50 p-4 text-center">
+                <span class="text-3xl mb-2">📁</span>
+                <span class="text-sm font-semibold">Choisir un fichier vidéo</span>
+                <input type="file" id="video-input" accept="video/*" class="hidden">
+            </label>
+
+            <div class="w-full max-w-xs mt-6 flex flex-col gap-4">
+                <input type="text" id="username-input" placeholder="Votre @pseudo" class="bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                <textarea id="caption-input" placeholder="Légende... #hashtag" rows="2" class="bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none resize-none"></textarea>
+                <button id="btn-submit-video" class="w-full bg-rose-500 hover:bg-rose-600 font-bold py-3 rounded-xl transition-colors active:scale-95">
+                    Partager sur le flux
+                </button>
+            </div>
+        </div>
+
+        <!-- PANNEAU DES COMMENTAIRES -->
+        <div id="comment-drawer" class="absolute bottom-0 left-0 right-0 h-[60%] bg-zinc-900 border-t border-zinc-800 rounded-t-2xl z-40 transform translate-y-full transition-transform duration-300 flex flex-col text-white">
+            <div class="relative p-4 text-center border-b border-zinc-800 flex justify-between items-center">
+                <div class="w-6"></div>
+                <span class="font-semibold text-sm"><span id="comment-count-header">0</span> commentaires</span>
+                <button id="btn-close-comments" class="text-zinc-400 hover:text-white text-lg font-bold">✕</button>
+            </div>
+            <div id="comments-list" class="flex-1 p-4 overflow-y-auto space-y-4 text-sm"></div>
+            <div class="p-3 border-t border-zinc-800 bg-zinc-950 flex gap-2 items-center">
+                <input type="text" id="new-comment-input" placeholder="Ajouter un commentaire..." class="flex-1 bg-zinc-800 border border-zinc-700 rounded-full px-4 py-2.5 text-sm focus:outline-none focus:border-zinc-500">
+                <button id="btn-send-comment" class="bg-rose-500 hover:bg-rose-600 text-white font-bold px-4 py-2 rounded-full text-xs transition-colors">
+                    Envoyer
+                </button>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // --- CONFIGURATION DE L'URL DYNAMIQUE ---
+        const API_URL = (window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost") 
+            ? "http://127.0.0.1:3000" 
+            : window.location.origin;
+
+        const feed = document.getElementById('feed');
+        const uploadModal = document.getElementById('upload-modal');
+        const btnOpenUpload = document.getElementById('btn-open-upload');
+        const btnCloseUpload = document.getElementById('btn-close-upload');
+        const btnSubmitVideo = document.getElementById('btn-submit-video');
+        
+        const videoInput = document.getElementById('video-input');
+        const usernameInput = document.getElementById('username-input');
+        const captionInput = document.getElementById('caption-input');
+
+        const commentDrawer = document.getElementById('comment-drawer');
+        const btnCloseComments = document.getElementById('btn-close-comments');
+        const commentsList = document.getElementById('comments-list');
+        const newCommentInput = document.getElementById('new-comment-input');
+        const btnSendComment = document.getElementById('btn-send-comment');
+        const commentCountHeader = document.getElementById('comment-count-header');
+
+        let videoIdEnCours = null;
+        let cardEnCours = null;
+        const stockCommentaires = {};
+
+        const observerOptions = { root: feed, threshold: 0.6 };
+        const videoObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                const video = entry.target;
+                if (entry.isIntersecting) {
+                    video.play().catch(() => {});
+                } else {
+                    video.pause();
+                    video.currentTime = 0;
+                }
+            });
+        }, observerOptions);
+
+        // --- MOTEUR DE SWIPE ---
+        let startY = 0;
+        let isDragging = false;
+
+        function handleStart(e) {
+            if (commentDrawer.contains(e.target) && !commentDrawer.classList.contains('translate-y-full')) return;
+            if (e.target.closest('button') || e.target.closest('input') || e.target.closest('label')) return;
+            isDragging = true;
+            startY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+        }
+
+        function handleEnd(e) {
+            if (!isDragging) return;
+            isDragging = false;
+            const endY = e.type.includes('touch') ? e.changedTouches[0].clientY : e.clientY;
+            const diffY = startY - endY;
+            const seuil = 60;
+
+            const cards = Array.from(document.querySelectorAll('.video-card'));
+            if (cards.length === 0) return;
+
+            let currentIndex = cards.findIndex(card => {
+                const rect = card.getBoundingClientRect();
+                return rect.top >= -10 && rect.top <= 10;
+            });
+
+            if (currentIndex === -1) {
+                let minDiff = Infinity;
+                cards.forEach((card, index) => {
+                    const diff = Math.abs(card.getBoundingClientRect().top);
+                    if (diff < minDiff) { minDiff = diff; currentIndex = index; }
+                });
+            }
+
+            if (diffY > seuil && currentIndex < cards.length - 1) {
+                feed.scrollTo({ top: cards[currentIndex + 1].offsetTop, behavior: 'smooth' });
+            } else if (diffY < -seuil && currentIndex > 0) {
+                feed.scrollTo({ top: cards[currentIndex - 1].offsetTop, behavior: 'smooth' });
+            }
+        }
+
+        feed.addEventListener('mousedown', handleStart);
+        window.addEventListener('mouseup', handleEnd);
+        feed.addEventListener('touchstart', handleStart, { passive: true });
+        feed.addEventListener('touchend', handleEnd, { passive: true });
+
+        // --- LIKES ---
+        function piloterLesLikes(videoCard) {
+            const likeBtn = videoCard.querySelector('.btn-like');
+            const likeCountSpan = videoCard.querySelector('.like-count');
+            if (!likeBtn || !likeCountSpan) return;
+
+            let isLiked = false;
+            let count = parseInt(likeCountSpan.innerText) || 0;
+
+            likeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                isLiked = !isLiked;
+                if (isLiked) { count++; likeBtn.innerText = '❤️'; }
+                else { count--; likeBtn.innerText = '🤍'; }
+                likeCountSpan.innerText = count;
+            });
+        }
+
+        // --- COMMENTAIRES ---
+        function piloterLesCommentaires(videoCard, idVideo) {
+            const commentBtn = videoCard.querySelector('.btn-comment');
+            if (!stockCommentaires[idVideo]) { stockCommentaires[idVideo] = []; }
+            commentBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                videoIdEnCours = idVideo;
+                cardEnCours = videoCard;
+                ouvrirTiroirCommentaires();
+            });
+        }
+
+        function ouvrirTiroirCommentaires() {
+            const liste = stockCommentaires[videoIdEnCours] || [];
+            commentsList.innerHTML = '';
+            commentCountHeader.innerText = liste.length;
+
+            if (liste.length === 0) {
+                commentsList.innerHTML = `<div class="text-zinc-500 text-center py-8">Soyez le premier à commenter...</div>`;
+            } else {
+                liste.forEach(c => {
+                    const item = document.createElement('div');
+                    item.className = "flex flex-col gap-0.5 bg-zinc-800/30 p-2.5 rounded-xl border border-zinc-800/50";
+                    item.innerHTML = `<span class="font-bold text-zinc-300 text-xs">@${c.user}</span><p class="text-zinc-100">${c.text}</p>`;
+                    commentsList.appendChild(item);
+                });
+            }
+            commentDrawer.classList.remove('translate-y-full');
+        }
+
+        btnCloseComments.addEventListener('click', () => {
+            commentDrawer.classList.add('translate-y-full');
+            videoIdEnCours = null;
+            cardEnCours = null;
+        });
+
+        btnSendComment.addEventListener('click', () => {
+            const text = newCommentInput.value.trim();
+            if (!text || !videoIdEnCours) return;
+
+            stockCommentaires[videoIdEnCours].push({ user: 'Moi', text: text });
+            newCommentInput.value = '';
+            ouvrirTiroirCommentaires();
+            if (cardEnCours) {
+                cardEnCours.querySelector('.comment-count').innerText = stockCommentaires[videoIdEnCours].length;
+            }
+            commentsList.scrollTop = commentsList.scrollHeight;
+        });
+
+        newCommentInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') btnSendComment.click();
+        });
+
+        // --- SUPPRESSION (Correction URL) ---
+        function piloterLaSuppression(videoCard, idVideo) {
+            const deleteBtn = videoCard.querySelector('.btn-delete');
+            if (!deleteBtn) return;
+
+            deleteBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const confirmation = confirm("Voulez-vous vraiment supprimer définitivement cette vidéo ?");
+                if (!confirmation) return;
+
+                try {
+                    const response = await fetch(`${API_URL}/api/videos/${idVideo}`, {
+                        method: 'DELETE'
+                    });
+
+                    if (response.ok) {
+                        videoCard.remove();
+                        if (document.querySelectorAll('.video-card').length === 0) {
+                            chargerHistorique();
+                        }
+                    } else {
+                        alert("Erreur lors de la suppression sur le serveur.");
+                    }
+                } catch (error) {
+                    console.error(error);
+                    alert("Erreur réseau.");
+                }
+            });
+        }
+
+        // --- COMPOSANT VIDEO CARD ---
+        function genererVideoCard(id, username, caption, videoSrc, insererAuDebut = false) {
+            const videoCard = document.createElement('div');
+            videoCard.className = "video-card relative w-full h-full bg-black flex-shrink-0";
+            
+            videoCard.innerHTML = `
+                <video class="tiktok-video w-full h-full object-cover pointer-events-none" loop muted playsinline src="${videoSrc}"></video>
+                <div class="absolute bottom-20 left-4 right-16 text-white z-10 pointer-events-none">
+                    <h3 class="font-bold text-lg">@${username}</h3>
+                    <p class="text-sm mt-1">${caption}</p>
+                </div>
+                <div class="absolute bottom-24 right-4 flex flex-col gap-5 items-center z-10 text-white select-none">
+                    <button class="btn-delete p-3 bg-red-600/80 rounded-full hover:bg-red-700 active:scale-90 transition-all cursor-pointer text-xl border border-red-500/30">🗑️</button>
+                    <div class="flex flex-col items-center">
+                        <button class="btn-like p-3 bg-zinc-800/60 rounded-full hover:bg-zinc-700/80 active:scale-90 transition-all cursor-pointer text-xl">🤍</button>
+                        <span class="like-count text-xs font-semibold mt-1">0</span>
+                    </div>
+                    <div class="flex flex-col items-center">
+                        <button class="btn-comment p-3 bg-zinc-800/60 rounded-full hover:bg-zinc-700/80 active:scale-90 transition-all cursor-pointer text-xl">💬</button>
+                        <span class="comment-count text-xs font-semibold mt-1">0</span>
+                    </div>
+                </div>
+            `;
+
+            if (insererAuDebut) {
+                feed.insertBefore(videoCard, feed.firstChild);
+            } else {
+                feed.appendChild(videoCard);
+            }
+
+            const videoElement = videoCard.querySelector('.tiktok-video');
+            videoObserver.observe(videoElement);
+
+            piloterLesLikes(videoCard);
+            piloterLesCommentaires(videoCard, id);
+            piloterLaSuppression(videoCard, id);
+            return videoElement;
+        }
+
+        // --- CHARGEMENT HISTORIQUE (Correction URL) ---
+        async function chargerHistorique() {
+            try {
+                const response = await fetch(`${API_URL}/api/videos`);
+                const videos = await response.json();
+                feed.innerHTML = '';
+
+                if (videos.length === 0) {
+                    genererVideoCard(Date.now(), 'eko_team', 'Bienvenue sur Eko ! Appuie sur + pour ajouter tes videos. 🚀', 'https://assets.mixkit.co/videos/preview/mixkit-girl-in-neon-sign-lighting-41824-large.mp4');
+                    const demoDel = feed.querySelector('.btn-delete');
+                    if (demoDel) demoDel.remove();
+                    return;
+                }
+
+                videos.forEach(v => {
+                    // Ici, on cible bien la route d'exposition des fichiers statiques du serveur
+                    const videoSrc = `${API_URL}/videos/${v.filename}`;
+                    genererVideoCard(v.id || Date.now(), v.username, v.caption, videoSrc);
+                });
+            } catch (error) {
+                console.error("Erreur historique :", error);
+            }
+        }
+
+        chargerHistorique();
+
+        btnOpenUpload.addEventListener('click', () => uploadModal.classList.remove('hidden'));
+        btnCloseUpload.addEventListener('click', () => uploadModal.classList.add('hidden'));
+
+        // --- ACTION BOUTON PUBLIER (Correction URL) ---
+        btnSubmitVideo.addEventListener('click', async () => {
+            const file = videoInput.files[0];
+            const username = usernameInput.value.trim() || 'anonyme';
+            const caption = captionInput.value.trim() || 'Nouvelle vidéo !';
+
+            if (!file) {
+                alert('Veuillez sélectionner un fichier.');
+                return;
+            }
+
+            const localVideoBlob = URL.createObjectURL(file);
+            const generationId = Date.now();
+
+            const formData = new FormData();
+            formData.append('video', file);
+            formData.append('username', username);
+            formData.append('caption', caption);
+
+            try {
+                btnSubmitVideo.innerText = "Envoi...";
+                btnSubmitVideo.disabled = true;
+
+                await fetch(`${API_URL}/api/upload`, { method: 'POST', body: formData });
+
+                const newVid = genererVideoCard(generationId, username, caption, localVideoBlob, true);
+                uploadModal.classList.add('hidden');
+                feed.scrollTo({ top: 0, behavior: 'smooth' });
+
+                newVid.load();
+                setTimeout(() => { newVid.play().catch(() => {}); }, 300);
+
+            } catch (error) {
+                console.error(error);
+                alert("Erreur réseau.");
+            } finally {
+                btnSubmitVideo.innerText = "Partager sur le flux";
+                btnSubmitVideo.disabled = false;
+                videoInput.value = '';
+                usernameInput.value = '';
+                captionInput.value = '';
+            }
+        });
+    </script>
+</body>
+</html>
