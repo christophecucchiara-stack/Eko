@@ -49,10 +49,19 @@ const upload = multer({ storage: storage });
 // Permet au serveur de distribuer directement les fichiers du dossier (HTML, CSS, JS)
 app.use(express.static(__dirname));
 
-// Route principale : Envoie l'index en résolvant le chemin absolu de manière stricte
+// Test de secours : on envoie du HTML directement écrit dans le code
 app.get('/', (req, res) => {
-    res.sendFile(path.resolve(__dirname, 'index.html'));
-});
+    res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head><title>Test Eko</title></head>
+        <body style="background: black; color: white; text-align: center; font-family: sans-serif; padding-top: 50px;">
+            <h1>🚀 Le serveur Eko répond !</h1>
+            <p>Si tu vois ce message, le serveur en ligne fonctionne.</p>
+            <p>Le problème vient bien du fait qu'il ne trouve pas ton fichier index.html sur GitHub.</p>
+        </body>
+        </html>
+    `);
 });// 5. LES ROUTES API
 
 // Récupérer toutes les vidéos
